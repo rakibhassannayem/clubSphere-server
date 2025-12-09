@@ -50,7 +50,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("clubSphere_db");
     const clubsCollection = db.collection("clubs");
@@ -66,12 +66,14 @@ async function run() {
         query.managerEmail = email;
       }
 
+      const options = {sort: {members: -1}}
+
       // check email address
       if (email !== req.decoded_email) {
         return res.status(403).send({ message: "forbidden access" });
       }
 
-      const cursor = clubsCollection.find(query);
+      const cursor = clubsCollection.find(query, options);
       const result = await cursor.toArray();
       res.send(result);
     });
