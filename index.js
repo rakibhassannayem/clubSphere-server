@@ -1,8 +1,9 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const app = express();
-require("dotenv").config();
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
 const port = process.env.PORT || 3000;
 
@@ -54,8 +55,9 @@ async function run() {
 
     const db = client.db("clubSphere_db");
     const clubsCollection = db.collection("clubs");
+    const membersCollection = db.collection("members");
 
-    // clubs api
+    // Clubs related APIs
     app.get("/clubs", async (req, res) => {
       const email = req.query.email;
       const query = {};
@@ -66,7 +68,7 @@ async function run() {
         query.managerEmail = email;
       }
 
-      const options = {sort: {members: -1}}
+      const options = { sort: { members: -1 } };
 
       // check email address
       if (email !== req.decoded_email) {
@@ -78,10 +80,75 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/clubs/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await clubsCollection.findOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
     app.post("/clubs", async (req, res) => {
       const club = req.body;
       const result = await clubsCollection.insertOne(club);
       res.send(result);
+    });
+
+    // Payments related APIs
+    app.post("/create-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: paymentInfo?.clubName,
+                description: paymentInfo?.description,
+                images: [paymentInfo?.bannerImage],
+              },
+              unit_amount: paymentInfo?.membershipFee * 100,
+            },
+            quantity: 1,
+          },
+        ],
+        customer_email: paymentInfo?.member?.email,
+        mode: "payment",
+        metadata: {
+          clubId: paymentInfo?.clubId,
+          memberEmail: paymentInfo?.member.email,
+          memberName: paymentInfo?.member.name,
+        },
+        success_url: `${process.env.CLIENT_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.CLIENT_DOMAIN}/dashboard/club-details/${paymentInfo?.clubId}`,
+      });
+      res.send({ url: session.url });
+    });
+
+    app.post("/payment-success", async (req, res) => {
+      const { sessionId } = req.body;
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      const club = await clubsCollection.findOne({
+        _id: new ObjectId(session.metadata.clubId),
+      });
+      const joinReqDuplicate = await membersCollection.findOne({
+        transactionId: session.payment_intent,
+      });
+
+      if (session.status === "complete" && club && !joinReqDuplicate) {
+        const joinReqInfo = {
+          clubId: session.metadata.clubId,
+          transactionId: session.payment_intent,
+          memberEmail: session.metadata.memberEmail,
+          memberName: session.metadata.memberName,
+          status: "pending",
+          manager: club.managerEmail,
+          clubName: club.clubName,
+          category: club.category,
+          joinedAt: new Date(),
+        };
+        const result = membersCollection.insertOne(joinReqInfo);
+      }
+      
+      res.send({ success: false });
     });
 
     // Send a ping to confirm a successful connection
