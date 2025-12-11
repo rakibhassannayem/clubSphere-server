@@ -54,6 +54,7 @@ async function run() {
     // await client.connect();
 
     const db = client.db("clubSphere_db");
+    const usersCollection = db.collection("users");
     const clubsCollection = db.collection("clubs");
     const memberShipsCollection = db.collection("memberShips");
 
@@ -185,6 +186,22 @@ async function run() {
       }
 
       res.send({ success: false });
+    });
+
+    // users related API's
+    app.post("/user", async (req, res) => {
+      const userData = req.body;
+      userData.role = "member";
+      userData.createdAt = new Date();
+      const email = userData.email;
+      const userExists = await usersCollection.findOne({ email });
+
+      if (userExists) {
+        return res.send({ message: "User Already Exists" });
+      }
+
+      const result = await usersCollection.insertOne(userData);
+      res.send(result);
     });
 
     // Send a ping to confirm a successful connection
