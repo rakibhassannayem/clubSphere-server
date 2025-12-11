@@ -55,7 +55,7 @@ async function run() {
 
     const db = client.db("clubSphere_db");
     const clubsCollection = db.collection("clubs");
-    const membersCollection = db.collection("members");
+    const memberShipsCollection = db.collection("memberShips");
 
     // Clubs related APIs
     app.get("/clubs", async (req, res) => {
@@ -89,6 +89,42 @@ async function run() {
     app.post("/clubs", async (req, res) => {
       const club = req.body;
       const result = await clubsCollection.insertOne(club);
+      res.send(result);
+    });
+
+    // members APIs
+    app.get("/member-clubs/:email", async (req, res) => {
+      const email = req.params.email;
+
+      const club = await memberShipsCollection
+        .find({ memberEmail: email })
+        .toArray();
+      const clubId = club[0].clubId;
+
+      const result = await clubsCollection
+        .find({ _id: new ObjectId(clubId) })
+        .toArray();
+      res.send(result);
+    });
+
+    // managers APIs
+    app.get("/manager-clubs/:email", async (req, res) => {
+      const email = req.params.email;
+
+      const result = await clubsCollection
+        .find({ managerEmail: email })
+        .toArray();
+
+      res.send(result);
+    });
+
+    app.get("/club-members/:email", async (req, res) => {
+      const email = req.params.email;
+
+      const result = await memberShipsCollection
+        .find({ managerEmail: email })
+        .toArray();
+
       res.send(result);
     });
 
@@ -129,7 +165,7 @@ async function run() {
       const club = await clubsCollection.findOne({
         _id: new ObjectId(session.metadata.clubId),
       });
-      const joinReqDuplicate = await membersCollection.findOne({
+      const joinReqDuplicate = await memberShipsCollection.findOne({
         transactionId: session.payment_intent,
       });
 
@@ -139,15 +175,15 @@ async function run() {
           transactionId: session.payment_intent,
           memberEmail: session.metadata.memberEmail,
           memberName: session.metadata.memberName,
-          status: "pending",
-          manager: club.managerEmail,
+          status: "active",
+          managerEmail: club.managerEmail,
           clubName: club.clubName,
           category: club.category,
           joinedAt: new Date(),
         };
-        const result = membersCollection.insertOne(joinReqInfo);
+        const result = memberShipsCollection.insertOne(joinReqInfo);
       }
-      
+
       res.send({ success: false });
     });
 
