@@ -18,8 +18,7 @@ app.use(express.json());
 app.use(cors());
 
 const verifyFBToken = async (req, res, next) => {
-  console.log("headers in the middleware: ", req.headers.authorization);
-  const token = req.headers.authorization;
+  const token = req?.headers?.authorization;
 
   if (!token) {
     return res.status(401).send({ message: "unauthorized access" });
@@ -60,23 +59,7 @@ async function run() {
 
     // Clubs related APIs
     app.get("/clubs", async (req, res) => {
-      const email = req.query.email;
-      const query = {};
-
-      // console.log('headers-----', req.headers)
-
-      if (email) {
-        query.managerEmail = email;
-      }
-
-      const options = { sort: { members: -1 } };
-
-      // check email address
-      if (email !== req.decoded_email) {
-        return res.status(403).send({ message: "forbidden access" });
-      }
-
-      const cursor = clubsCollection.find(query, options);
+      const cursor = clubsCollection.find();
       const result = await cursor.toArray();
       res.send(result);
     });
@@ -109,13 +92,21 @@ async function run() {
     });
 
     // managers APIs
-    app.get("/manager-clubs/:email", async (req, res) => {
-      const email = req.params.email;
+    app.get("/manager-clubs", verifyFBToken, async (req, res) => {
+      const email = req.query.email;
+      const query = {};
 
-      const result = await clubsCollection
-        .find({ managerEmail: email })
-        .toArray();
+      if (email) {
+        query.managerEmail = email;
+      }
 
+      // check email address
+      if (email !== req.decoded_email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
+      const cursor = clubsCollection.find(query);
+      const result = await cursor.toArray();
       res.send(result);
     });
 
@@ -205,10 +196,10 @@ async function run() {
     });
 
     // get user's role
-    app.get("/user/role/:email", async (req, res) => {
-      const email = req.params.email;
+    app.get("/user/role", verifyFBToken, async (req, res) => {
+      const email = req.decoded_email;
       const result = await usersCollection.findOne({ email });
-      
+
       res.send({ role: result?.role });
     });
 
