@@ -94,7 +94,6 @@ async function run() {
     // managers APIs
     app.get("/manager-clubs", verifyFBToken, async (req, res) => {
       const email = req.query.email;
-      console.log("manager-clubs", email);
       const query = {};
 
       if (email) {
@@ -204,10 +203,30 @@ async function run() {
 
     app.get("/user/role", verifyFBToken, async (req, res) => {
       const email = req.query.email;
-      console.log("user email", email);
+
       const result = await usersCollection.findOne({ email });
 
       res.send({ role: result?.role });
+    });
+
+    app.patch("/update-role", async (req, res) => {
+      const { email, role } = req.body;
+      const result = await usersCollection.updateOne(
+        { email },
+        { $set: { role } }
+      );
+
+      res.send(result);
+    });
+
+    app.patch("/update-status", async (req, res) => {
+      const { id, status } = req.body;
+      const result = await clubsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status } }
+      );
+
+      res.send(result);
     });
 
     // Send a ping to confirm a successful connection
