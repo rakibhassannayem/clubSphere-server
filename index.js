@@ -94,6 +94,7 @@ async function run() {
     // managers APIs
     app.get("/manager-clubs", verifyFBToken, async (req, res) => {
       const email = req.query.email;
+      console.log("manager-clubs", email);
       const query = {};
 
       if (email) {
@@ -101,9 +102,9 @@ async function run() {
       }
 
       // check email address
-      if (email !== req.decoded_email) {
-        return res.status(403).send({ message: "forbidden access" });
-      }
+      // if (email !== req.decoded_email) {
+      //   return res.status(403).send({ message: "forbidden access" });
+      // }
 
       const cursor = clubsCollection.find(query);
       const result = await cursor.toArray();
@@ -195,9 +196,15 @@ async function run() {
       res.send(result);
     });
 
-    // get user's role
+    app.get("/users", async (req, res) => {
+      const cursor = usersCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
     app.get("/user/role", verifyFBToken, async (req, res) => {
-      const email = req.decoded_email;
+      const email = req.query.email;
+      console.log("user email", email);
       const result = await usersCollection.findOne({ email });
 
       res.send({ role: result?.role });
