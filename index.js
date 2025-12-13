@@ -76,6 +76,44 @@ async function run() {
       res.send(result);
     });
 
+    // admin APIs
+    app.get("/admin/overview", async (req, res) => {
+      const totalUsers = await usersCollection.estimatedDocumentCount();
+      const totalClubs = await clubsCollection.estimatedDocumentCount();
+
+      const activeMembers = await memberShipsCollection.countDocuments({
+        status: "active",
+      });
+
+      const pendingClubs = await clubsCollection.countDocuments({
+        status: "pending",
+      });
+
+      // const totalEvents = await eventsCollection.estimatedDocumentCount();
+
+      // const revenueResult = await paymentsCollection
+      //   .aggregate([
+      //     {
+      //       $group: {
+      //         _id: null,
+      //         total: { $sum: "$amount" },
+      //       },
+      //     },
+      //   ])
+      //   .toArray();
+
+      // const revenue = revenueResult[0]?.total || 0;
+
+      res.send({
+        totalUsers,
+        totalClubs,
+        activeMembers,
+        pendingClubs,
+        // totalEvents,
+        // revenue,
+      });
+    });
+
     // members APIs
     app.get("/member-clubs/:email", async (req, res) => {
       const email = req.params.email;
