@@ -58,6 +58,7 @@ async function run() {
     const db = client.db("clubSphere_db");
     const usersCollection = db.collection("users");
     const clubsCollection = db.collection("clubs");
+    const eventsCollection = db.collection("events");
     const memberShipsCollection = db.collection("memberShips");
 
     // Role based middlewares
@@ -125,14 +126,27 @@ async function run() {
       res.send(result);
     });
 
+    // Events related APIs
+    app.get("/events", async (req, res) => {
+      const cursor = eventsCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    app.post("/events", async (req, res) => {
+      const event = req.body;
+      const result = await eventsCollection.insertOne(event);
+      res.send(result);
+    });
+
     // admin APIs
     app.get(
       "/admin/overview",
       verifyJwtToken,
       verifyAdmin,
       async (req, res) => {
-        const totalUsers = await usersCollection.estimatedDocumentCount();
-        const totalClubs = await clubsCollection.estimatedDocumentCount();
+        const totalUsers = await usersCollection.countDocuments();
+        const totalClubs = await clubsCollection.countDocuments();
 
         const activeMembers = await memberShipsCollection.countDocuments({
           status: "active",
@@ -168,22 +182,44 @@ async function run() {
       }
     );
 
-    // members APIs
-    app.get("/member-clubs/:email", async (req, res) => {
-      const email = req.params.email;
-
-      const club = await memberShipsCollection
-        .find({ memberEmail: email })
-        .toArray();
-      const clubId = club[0].clubId;
-
-      const result = await clubsCollection
-        .find({ _id: new ObjectId(clubId) })
-        .toArray();
-      res.send(result);
-    });
-
     // managers APIs
+    app.get(
+      "/manager/overview",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const myClubs = await clubsCollection.countDocuments({
+          managerEmail: req.token_email,
+        });
+        const totalMembers = await memberShipsCollection.countDocuments({
+          managerEmail: req.token_email,
+        });
+        const totalEvents = await eventsCollection.countDocuments({
+          managerEmail: req.token_email,
+        });
+
+        // const revenueResult = await paymentsCollection
+        //   .aggregate([
+        //     {
+        //       $group: {
+        //         _id: null,
+        //         total: { $sum: "$amount" },
+        //       },
+        //     },
+        //   ])
+        //   .toArray();
+
+        // const revenue = revenueResult[0]?.total || 0;
+
+        res.send({
+          myClubs,
+          totalMembers,
+          totalEvents,
+          // revenue,
+        });
+      }
+    );
+
     app.get(
       "/manager-clubs",
       verifyJwtToken,
@@ -207,6 +243,29 @@ async function run() {
       }
     );
 
+    app.get(
+      "/manager-events",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const email = req.query.email;
+        const query = {};
+
+        if (email) {
+          query.managerEmail = email;
+        }
+
+        // check email address
+        if (email !== req.token_email) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
+
+        const cursor = eventsCollection.find(query);
+        const result = await cursor.toArray();
+        res.send(result);
+      }
+    );
+
     app.get("/club-members/:email", async (req, res) => {
       const email = req.params.email;
 
@@ -214,6 +273,21 @@ async function run() {
         .find({ managerEmail: email })
         .toArray();
 
+      res.send(result);
+    });
+
+    // members APIs
+    app.get("/member-clubs/:email", async (req, res) => {
+      const email = req.params.email;
+
+      const club = await memberShipsCollection
+        .find({ memberEmail: email })
+        .toArray();
+      const clubId = club[0].clubId;
+
+      const result = await clubsCollection
+        .find({ _id: new ObjectId(clubId) })
+        .toArray();
       res.send(result);
     });
 
@@ -317,9 +391,19 @@ async function run() {
       res.send(result);
     });
 
-    app.patch("/update-status", async (req, res) => {
+    app.patch("/update-club-status", async (req, res) => {
       const { id, status } = req.body;
       const result = await clubsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status } }
+      );
+
+      res.send(result);
+    });
+
+    app.patch("/update-member-status", async (req, res) => {
+      const { id, status } = req.body;
+      const result = await memberShipsCollection.updateOne(
         { _id: new ObjectId(id) },
         { $set: { status } }
       );
