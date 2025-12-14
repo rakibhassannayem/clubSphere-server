@@ -5,6 +5,7 @@ const app = express();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
+const jwt = require("jsonwebtoken");
 const port = process.env.PORT || 3000;
 
 const serviceAccount = require("./clubsphere-firebase-adminsdk.json");
@@ -17,23 +18,25 @@ admin.initializeApp({
 app.use(express.json());
 app.use(cors());
 
-const verifyFBToken = async (req, res, next) => {
-  const token = req?.headers?.authorization;
+const verifyJwtToken = async (req, res, next) => {
+  const authorization = req?.headers?.authorization;
+  if (!authorization) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
 
+  const token = authorization.split(" ")[1];
   if (!token) {
     return res.status(401).send({ message: "unauthorized access" });
   }
 
-  try {
-    const idToken = token.split(" ")[1];
-    const decoded = await admin.auth().verifyIdToken(idToken);
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
 
-    req.decoded_email = decoded.email;
-
+    req.token_email = decoded.email;
     next();
-  } catch (err) {
-    return res.status(401).send({ message: "unauthorized access" });
-  }
+  });
 };
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.8vhjke1.mongodb.net/?appName=Cluster0`;
@@ -57,6 +60,52 @@ async function run() {
     const clubsCollection = db.collection("clubs");
     const memberShipsCollection = db.collection("memberShips");
 
+    // Role based middlewares
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.token_email;
+      const user = await usersCollection.findOne({ email });
+
+      if (!user || user?.role !== "admin")
+        return res
+          .status(403)
+          .send({ message: "Admin only actions!", role: user?.role });
+
+      next();
+    };
+
+    const verifyMananger = async (req, res, next) => {
+      const email = req.token_email;
+      const user = await usersCollection.findOne({ email });
+
+      if (!user || user?.role !== "manager")
+        return res
+          .status(403)
+          .send({ message: "Manager only actions!", role: user?.role });
+
+      next();
+    };
+
+    const verifyMember = async (req, res, next) => {
+      const email = req.token_email;
+      const user = await usersCollection.findOne({ email });
+
+      if (!user || user?.role !== "member")
+        return res
+          .status(403)
+          .send({ message: "Member only actions!", role: user?.role });
+
+      next();
+    };
+
+    // JWT token generation and send to client
+    app.post("/getJwtToken", (req, res) => {
+      loggedUser = req.body;
+      const token = jwt.sign(loggedUser, process.env.JWT_SECRET, {
+        expiresIn: "1h",
+      });
+      res.send({ token: token });
+    });
+
     // Clubs related APIs
     app.get("/clubs", async (req, res) => {
       const cursor = clubsCollection.find();
@@ -77,42 +126,47 @@ async function run() {
     });
 
     // admin APIs
-    app.get("/admin/overview", async (req, res) => {
-      const totalUsers = await usersCollection.estimatedDocumentCount();
-      const totalClubs = await clubsCollection.estimatedDocumentCount();
+    app.get(
+      "/admin/overview",
+      verifyJwtToken,
+      verifyAdmin,
+      async (req, res) => {
+        const totalUsers = await usersCollection.estimatedDocumentCount();
+        const totalClubs = await clubsCollection.estimatedDocumentCount();
 
-      const activeMembers = await memberShipsCollection.countDocuments({
-        status: "active",
-      });
+        const activeMembers = await memberShipsCollection.countDocuments({
+          status: "active",
+        });
 
-      const pendingClubs = await clubsCollection.countDocuments({
-        status: "pending",
-      });
+        const pendingClubs = await clubsCollection.countDocuments({
+          status: "pending",
+        });
 
-      // const totalEvents = await eventsCollection.estimatedDocumentCount();
+        // const totalEvents = await eventsCollection.estimatedDocumentCount();
 
-      // const revenueResult = await paymentsCollection
-      //   .aggregate([
-      //     {
-      //       $group: {
-      //         _id: null,
-      //         total: { $sum: "$amount" },
-      //       },
-      //     },
-      //   ])
-      //   .toArray();
+        // const revenueResult = await paymentsCollection
+        //   .aggregate([
+        //     {
+        //       $group: {
+        //         _id: null,
+        //         total: { $sum: "$amount" },
+        //       },
+        //     },
+        //   ])
+        //   .toArray();
 
-      // const revenue = revenueResult[0]?.total || 0;
+        // const revenue = revenueResult[0]?.total || 0;
 
-      res.send({
-        totalUsers,
-        totalClubs,
-        activeMembers,
-        pendingClubs,
-        // totalEvents,
-        // revenue,
-      });
-    });
+        res.send({
+          totalUsers,
+          totalClubs,
+          activeMembers,
+          pendingClubs,
+          // totalEvents,
+          // revenue,
+        });
+      }
+    );
 
     // members APIs
     app.get("/member-clubs/:email", async (req, res) => {
@@ -130,23 +184,28 @@ async function run() {
     });
 
     // managers APIs
-    app.get("/manager-clubs", verifyFBToken, async (req, res) => {
-      const email = req.query.email;
-      const query = {};
+    app.get(
+      "/manager-clubs",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const email = req.query.email;
+        const query = {};
 
-      if (email) {
-        query.managerEmail = email;
+        if (email) {
+          query.managerEmail = email;
+        }
+
+        // check email address
+        if (email !== req.token_email) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
+
+        const cursor = clubsCollection.find(query);
+        const result = await cursor.toArray();
+        res.send(result);
       }
-
-      // check email address
-      // if (email !== req.decoded_email) {
-      //   return res.status(403).send({ message: "forbidden access" });
-      // }
-
-      const cursor = clubsCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
-    });
+    );
 
     app.get("/club-members/:email", async (req, res) => {
       const email = req.params.email;
@@ -233,13 +292,14 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/users", async (req, res) => {
-      const cursor = usersCollection.find();
+    app.get("/users", verifyJwtToken, async (req, res) => {
+      const adminEmail = req.token_email;
+      const cursor = usersCollection.find({ email: { $ne: adminEmail } });
       const result = await cursor.toArray();
       res.send(result);
     });
 
-    app.get("/user/role", verifyFBToken, async (req, res) => {
+    app.get("/user/role", verifyJwtToken, async (req, res) => {
       const email = req.query.email;
 
       const result = await usersCollection.findOne({ email });
