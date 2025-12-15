@@ -126,6 +126,16 @@ async function run() {
       res.send(result);
     });
 
+    app.patch("/clubs/:id", async (req, res) => {
+      const query = { _id: new ObjectId(req.params.id) };
+      const updatedDoc = req.body;
+      const result = await clubsCollection.updateOne(query, {
+        $set: updatedDoc,
+      });
+
+      res.send(result);
+    });
+
     // Events related APIs
     app.get("/events", async (req, res) => {
       const cursor = eventsCollection.find();
@@ -136,6 +146,12 @@ async function run() {
     app.post("/events", async (req, res) => {
       const event = req.body;
       const result = await eventsCollection.insertOne(event);
+      res.send(result);
+    });
+
+    app.get("/events/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await eventsCollection.findOne({ _id: new ObjectId(id) });
       res.send(result);
     });
 
