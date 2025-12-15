@@ -155,6 +155,25 @@ async function run() {
       res.send(result);
     });
 
+    app.patch("/events/:id", async (req, res) => {
+      const query = { _id: new ObjectId(req.params.id) };
+      const updatedDoc = req.body;
+      const result = await eventsCollection.updateOne(query, {
+        $set: updatedDoc,
+      });
+
+      res.send(result);
+    });
+
+    app.delete("/events/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+
+      const result = await eventsCollection.deleteOne(query);
+
+      res.send(result);
+    });
+
     // admin APIs
     app.get(
       "/admin/overview",
