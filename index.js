@@ -184,40 +184,43 @@ async function run() {
       async (req, res) => {
         const totalUsers = await usersCollection.countDocuments();
         const totalClubs = await clubsCollection.countDocuments();
-
-        const activeMembers = await memberShipsCollection.countDocuments({
-          status: "active",
-        });
+        const totalMemberships = await memberShipsCollection.countDocuments();
 
         const pendingClubs = await clubsCollection.countDocuments({
           status: "pending",
         });
 
-        // const totalEvents = await eventsCollection.estimatedDocumentCount();
+        const totalEvents = await eventsCollection.countDocuments();
 
-        // const revenueResult = await paymentsCollection
-        //   .aggregate([
-        //     {
-        //       $group: {
-        //         _id: null,
-        //         total: { $sum: "$amount" },
-        //       },
-        //     },
-        //   ])
-        //   .toArray();
+        const revenueResult = await paymentsCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                total: { $sum: "$amount" },
+              },
+            },
+          ])
+          .toArray();
 
-        // const revenue = revenueResult[0]?.total || 0;
+        const revenue = revenueResult[0]?.total || 0;
 
         res.send({
           totalUsers,
           totalClubs,
-          activeMembers,
+          totalMemberships,
           pendingClubs,
-          // totalEvents,
-          // revenue,
+          totalEvents,
+          revenue,
         });
       }
     );
+
+    app.get("/payments", async (req, res) => {
+      const cursor = paymentsCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
 
     // manager only APIs
     app.get(
@@ -251,7 +254,7 @@ async function run() {
           ])
           .toArray();
 
-        const revenue = revenueResult[0].totalAmount;
+        const revenue = revenueResult[0].totalAmount || 0;
 
         res.send({
           myClubs,
@@ -305,20 +308,10 @@ async function run() {
       verifyJwtToken,
       verifyMananger,
       async (req, res) => {
-        const email = req.query.email;
-        const query = {};
+        const managerEmail = req.token_email;
 
-        if (email) {
-          query.managerEmail = email;
-        }
+        const result = await eventsCollection.find({ managerEmail }).toArray();
 
-        // check email address
-        if (email !== req.token_email) {
-          return res.status(403).send({ message: "forbidden access" });
-        }
-
-        const cursor = eventsCollection.find(query);
-        const result = await cursor.toArray();
         res.send(result);
       }
     );
@@ -339,22 +332,81 @@ async function run() {
     );
 
     // members APIs
-    app.get("/member-clubs/:email", async (req, res) => {
-      const email = req.params.email;
+    app.get(
+      "/member/overview",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const memberEmail = req.token_email;
 
-      const club = await memberShipsCollection
-        .find({ memberEmail: email })
-        .toArray();
-      const clubId = club[0].clubId;
+        const totalClubs = await memberShipsCollection.countDocuments({
+          memberEmail,
+        });
 
-      const result = await clubsCollection
-        .find({ _id: new ObjectId(clubId) })
+        const totalEvents = await registrationsCollection.countDocuments({
+          memberEmail,
+        });
+
+        res.send({
+          totalClubs,
+          totalEvents,
+        });
+      }
+    );
+
+    app.get("/member-clubs", verifyJwtToken, verifyMember, async (req, res) => {
+      const memberEmail = req.token_email;
+
+      const result = await memberShipsCollection
+        .aggregate([
+          {
+            $match: { memberEmail },
+          },
+          {
+            $addFields: {
+              clubObjectId: { $toObjectId: "$clubId" },
+            },
+          },
+          {
+            $lookup: {
+              from: "clubs",
+              localField: "clubObjectId",
+              foreignField: "_id",
+              as: "club",
+            },
+          },
+          {
+            $unwind: "$club",
+          },
+          {
+            $replaceRoot: { newRoot: "$club" },
+          },
+        ])
         .toArray();
+
       res.send(result);
     });
 
+    app.get(
+  "/is-member/:clubId",
+  verifyJwtToken,
+  async (req, res) => {
+    const { clubId } = req.params;
+    const memberEmail = req.token_email;
+
+    const exists = await memberShipsCollection.findOne({
+      clubId: new ObjectId(clubId),
+      memberEmail,
+      status: "active",
+    });
+
+    res.send({ isMember: !!exists });
+  }
+);
+
+
     // Payments related APIs
-    app.post("/create-checkout-session", async (req, res) => {
+    app.post("/create-checkout-session", verifyJwtToken, async (req, res) => {
       try {
         const {
           paymentType,
@@ -394,11 +446,13 @@ async function run() {
 
           metadata: {
             paymentType,
-            clubId: clubId || "",
+            clubId,
             eventId: eventId || "",
             memberEmail: member.email,
             memberName: member.name,
             managerEmail,
+            clubName,
+            eventTitle,
           },
 
           success_url: `${process.env.CLIENT_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
@@ -426,7 +480,9 @@ async function run() {
       const {
         paymentType,
         clubId,
+        clubName,
         eventId,
+        eventTitle,
         memberEmail,
         memberName,
         managerEmail,
@@ -438,28 +494,33 @@ async function run() {
       const joinReqDuplicate = await memberShipsCollection.findOne({
         transactionId,
       });
-      if (joinReqDuplicate) {
-        return res.send({ success: true });
+      if (!joinReqDuplicate) {
+        // return res.send({ success: true });
+        // save payment
+        await paymentsCollection.insertOne({
+          paymentType,
+          amount: session.amount_total / 100,
+          transactionId,
+          memberEmail,
+          memberName,
+          managerEmail,
+          clubName,
+          clubId,
+          eventId: eventId ? eventId : null,
+          status: "success",
+          paidAt: new Date(),
+        });
       }
 
-      // save payment
-      await paymentsCollection.insertOne({
-        paymentType,
-        amount: session.amount_total / 100,
-        transactionId,
-        memberEmail,
-        memberName,
-        managerEmail,
-        clubId: clubId ? clubId : null,
-        eventId: eventId ? eventId : null,
-        status: "success",
-        paidAt: new Date(),
-      });
-
       if (paymentType === "membership") {
-        const club = await clubsCollection.findOne({
-          _id: new ObjectId(clubId),
-        });
+        await clubsCollection.updateOne(
+          { _id: new ObjectId(clubId) },
+          {
+            $inc: {
+              members: 1,
+            },
+          }
+        );
         await memberShipsCollection.insertOne({
           clubId,
           transactionId,
@@ -467,16 +528,22 @@ async function run() {
           memberName,
           status: "active",
           managerEmail: managerEmail,
-          clubName: club.clubName,
-          category: club.category,
+          clubName,
           joinedAt: new Date(),
         });
       }
 
       if (paymentType === "eventFee") {
+        await eventsCollection.updateOne(
+          { _id: new ObjectId(eventId) },
+          { $inc: { registrations: 1 } }
+        );
+
         await registrationsCollection.insertOne({
           eventId,
+          eventTitle,
           clubId,
+          clubName,
           memberEmail,
           memberName,
           managerEmail,
