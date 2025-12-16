@@ -58,8 +58,10 @@ async function run() {
     const db = client.db("clubSphere_db");
     const usersCollection = db.collection("users");
     const clubsCollection = db.collection("clubs");
-    const eventsCollection = db.collection("events");
     const memberShipsCollection = db.collection("memberShips");
+    const eventsCollection = db.collection("events");
+    const registrationsCollection = db.collection("eventRegistrations");
+    const paymentsCollection = db.collection("payments");
 
     // Role based middlewares
     const verifyAdmin = async (req, res, next) => {
@@ -174,7 +176,7 @@ async function run() {
       res.send(result);
     });
 
-    // admin APIs
+    // admin ony APIs
     app.get(
       "/admin/overview",
       verifyJwtToken,
@@ -217,40 +219,45 @@ async function run() {
       }
     );
 
-    // managers APIs
+    // manager only APIs
     app.get(
       "/manager/overview",
       verifyJwtToken,
       verifyMananger,
       async (req, res) => {
+        const managerEmail = req.token_email;
+
         const myClubs = await clubsCollection.countDocuments({
-          managerEmail: req.token_email,
+          managerEmail,
         });
         const totalMembers = await memberShipsCollection.countDocuments({
-          managerEmail: req.token_email,
+          managerEmail,
         });
         const totalEvents = await eventsCollection.countDocuments({
-          managerEmail: req.token_email,
+          managerEmail,
         });
 
-        // const revenueResult = await paymentsCollection
-        //   .aggregate([
-        //     {
-        //       $group: {
-        //         _id: null,
-        //         total: { $sum: "$amount" },
-        //       },
-        //     },
-        //   ])
-        //   .toArray();
+        const revenueResult = await paymentsCollection
+          .aggregate([
+            {
+              $match: { managerEmail },
+            },
+            {
+              $group: {
+                _id: null,
+                totalAmount: { $sum: "$amount" },
+              },
+            },
+          ])
+          .toArray();
 
-        // const revenue = revenueResult[0]?.total || 0;
+        const revenue = revenueResult[0].totalAmount;
 
         res.send({
           myClubs,
           totalMembers,
           totalEvents,
-          // revenue,
+          revenue,
         });
       }
     );
@@ -279,6 +286,21 @@ async function run() {
     );
 
     app.get(
+      "/club-members",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const managerEmail = req.token_email;
+
+        const result = await memberShipsCollection
+          .find({ managerEmail })
+          .toArray();
+
+        res.send(result);
+      }
+    );
+
+    app.get(
       "/manager-events",
       verifyJwtToken,
       verifyMananger,
@@ -301,15 +323,20 @@ async function run() {
       }
     );
 
-    app.get("/club-members/:email", async (req, res) => {
-      const email = req.params.email;
+    app.get(
+      "/registered-members",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const managerEmail = req.token_email;
 
-      const result = await memberShipsCollection
-        .find({ managerEmail: email })
-        .toArray();
+        const result = await registrationsCollection
+          .find({ managerEmail })
+          .toArray();
 
-      res.send(result);
-    });
+        res.send(result);
+      }
+    );
 
     // members APIs
     app.get("/member-clubs/:email", async (req, res) => {
@@ -328,61 +355,136 @@ async function run() {
 
     // Payments related APIs
     app.post("/create-checkout-session", async (req, res) => {
-      const paymentInfo = req.body;
-      const session = await stripe.checkout.sessions.create({
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              product_data: {
-                name: paymentInfo?.clubName,
-                description: paymentInfo?.description,
-                images: [paymentInfo?.bannerImage],
+      try {
+        const {
+          paymentType,
+          clubId,
+          eventId,
+          clubName,
+          eventTitle,
+          description,
+          bannerImage,
+          amount,
+          member,
+          managerEmail,
+        } = req.body;
+
+        if (!paymentType || !amount || !member?.email) {
+          return res.status(400).send({ message: "Invalid payment data" });
+        }
+
+        const session = await stripe.checkout.sessions.create({
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: paymentType === "membership" ? clubName : eventTitle,
+                  description,
+                  images: bannerImage ? [bannerImage] : [],
+                },
+                unit_amount: amount * 100,
               },
-              unit_amount: paymentInfo?.membershipFee * 100,
+              quantity: 1,
             },
-            quantity: 1,
+          ],
+
+          customer_email: member?.email,
+          mode: "payment",
+
+          metadata: {
+            paymentType,
+            clubId: clubId || "",
+            eventId: eventId || "",
+            memberEmail: member.email,
+            memberName: member.name,
+            managerEmail,
           },
-        ],
-        customer_email: paymentInfo?.member?.email,
-        mode: "payment",
-        metadata: {
-          clubId: paymentInfo?.clubId,
-          memberEmail: paymentInfo?.member.email,
-          memberName: paymentInfo?.member.name,
-        },
-        success_url: `${process.env.CLIENT_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.CLIENT_DOMAIN}/dashboard/club-details/${paymentInfo?.clubId}`,
-      });
-      res.send({ url: session.url });
+
+          success_url: `${process.env.CLIENT_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url:
+            paymentType === "membership"
+              ? `${process.env.CLIENT_DOMAIN}/dashboard/club-details/${clubId}`
+              : `${process.env.CLIENT_DOMAIN}/dashboard/event-details/${eventId}`,
+        });
+
+        res.send({ url: session.url });
+      } catch (error) {
+        console.error("Stripe Error:", error);
+        res.status(500).send({ message: "Failed to create checkout session" });
+      }
     });
 
     app.post("/payment-success", async (req, res) => {
       const { sessionId } = req.body;
       const session = await stripe.checkout.sessions.retrieve(sessionId);
-      const club = await clubsCollection.findOne({
-        _id: new ObjectId(session.metadata.clubId),
-      });
+
+      if (session.status !== "complete") {
+        return res.send({ success: false });
+      }
+
+      const {
+        paymentType,
+        clubId,
+        eventId,
+        memberEmail,
+        memberName,
+        managerEmail,
+      } = session.metadata;
+
+      const transactionId = session.payment_intent;
+
+      // prevent duplicate payments
       const joinReqDuplicate = await memberShipsCollection.findOne({
-        transactionId: session.payment_intent,
+        transactionId,
+      });
+      if (joinReqDuplicate) {
+        return res.send({ success: true });
+      }
+
+      // save payment
+      await paymentsCollection.insertOne({
+        paymentType,
+        amount: session.amount_total / 100,
+        transactionId,
+        memberEmail,
+        memberName,
+        managerEmail,
+        clubId: clubId ? clubId : null,
+        eventId: eventId ? eventId : null,
+        status: "success",
+        paidAt: new Date(),
       });
 
-      if (session.status === "complete" && club && !joinReqDuplicate) {
-        const joinReqInfo = {
-          clubId: session.metadata.clubId,
-          transactionId: session.payment_intent,
-          memberEmail: session.metadata.memberEmail,
-          memberName: session.metadata.memberName,
+      if (paymentType === "membership") {
+        const club = await clubsCollection.findOne({
+          _id: new ObjectId(clubId),
+        });
+        await memberShipsCollection.insertOne({
+          clubId,
+          transactionId,
+          memberEmail,
+          memberName,
           status: "active",
-          managerEmail: club.managerEmail,
+          managerEmail: managerEmail,
           clubName: club.clubName,
           category: club.category,
           joinedAt: new Date(),
-        };
-        const result = memberShipsCollection.insertOne(joinReqInfo);
+        });
       }
 
-      res.send({ success: false });
+      if (paymentType === "eventFee") {
+        await registrationsCollection.insertOne({
+          eventId,
+          clubId,
+          memberEmail,
+          memberName,
+          managerEmail,
+          transactionId,
+          status: "registered",
+          registeredAt: new Date(),
+        });
+      }
     });
 
     // users API
