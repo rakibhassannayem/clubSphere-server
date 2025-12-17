@@ -109,10 +109,39 @@ async function run() {
       res.send({ token: token });
     });
 
-    // Clubs related APIs
     app.get("/clubs", async (req, res) => {
-      const cursor = clubsCollection.find();
-      const result = await cursor.toArray();
+      const { search, category, sort } = req.query;
+
+      const query = {
+        status: "approved",
+      };
+
+      // Search
+      if (search) {
+        query.clubName = { $regex: search, $options: "i" };
+      }
+
+      // Filter
+      if (category) {
+        query.category = category;
+      }
+
+      let sortQuery = {};
+
+      // Sorting
+      if (sort === "mostMembers") {
+        sortQuery = { members: -1 };
+      } else if (sort === "lowestFee") {
+        sortQuery = { membershipFee: 1 };
+      } else if (sort === "highestFee") {
+        sortQuery = { membershipFee: -1 };
+      }
+
+      const result = await clubsCollection
+        .find(query)
+        .sort(sortQuery)
+        .toArray();
+
       res.send(result);
     });
 
@@ -124,8 +153,36 @@ async function run() {
 
     // Events related APIs
     app.get("/events", async (req, res) => {
-      const cursor = eventsCollection.find();
-      const result = await cursor.toArray();
+      const { search, category, sort } = req.query;
+
+      const query = {};
+
+      // Search
+      if (search) {
+        query.eventTitle = { $regex: search, $options: "i" };
+      }
+
+      // Filter
+      if (category) {
+        query.category = category;
+      }
+
+      let sortQuery = {};
+
+      // Sorting
+      if (sort === "mostMembers") {
+        sortQuery = { registrations: -1 };
+      } else if (sort === "lowestFee") {
+        sortQuery = { eventFee: 1 };
+      } else if (sort === "highestFee") {
+        sortQuery = { eventFee: -1 };
+      }
+
+      const result = await eventsCollection
+        .find(query)
+        .sort(sortQuery)
+        .toArray();
+
       res.send(result);
     });
 
@@ -191,6 +248,12 @@ async function run() {
         });
       }
     );
+
+    app.get("/admin-clubs", verifyJwtToken, verifyAdmin, async (req, res) => {
+      const cursor = clubsCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
 
     app.get("/payments", verifyJwtToken, verifyAdmin, async (req, res) => {
       const cursor = paymentsCollection.find();
@@ -346,6 +409,17 @@ async function run() {
     app.post("/events", verifyJwtToken, verifyMananger, async (req, res) => {
       const event = req.body;
       const result = await eventsCollection.insertOne(event);
+
+      if (result.acknowledged) {
+        await clubsCollection.updateOne(
+          { _id: new ObjectId(event.clubId) },
+          {
+            $inc: {
+              events: 1,
+            },
+          }
+        );
+      }
       res.send(result);
     });
 
@@ -513,39 +587,29 @@ async function run() {
       }
     );
 
-    app.get(
-      "/is-member/:clubId",
-      verifyJwtToken,
-      verifyMember,
-      async (req, res) => {
-        const { clubId } = req.params;
-        const memberEmail = req.token_email;
+    app.get("/is-member/:clubId", async (req, res) => {
+      const { clubId } = req.params;
+      const memberEmail = req.token_email;
 
-        const exists = await memberShipsCollection.findOne({
-          clubId,
-          memberEmail,
-        });
+      const exists = await memberShipsCollection.findOne({
+        clubId,
+        memberEmail,
+      });
 
-        res.send({ isMember: !!exists });
-      }
-    );
+      res.send({ isMember: !!exists });
+    });
 
-    app.get(
-      "/is-registered/:eventId",
-      verifyJwtToken,
-      verifyMember,
-      async (req, res) => {
-        const { eventId } = req.params;
-        const memberEmail = req.token_email;
+    app.get("/is-registered/:eventId", async (req, res) => {
+      const { eventId } = req.params;
+      const memberEmail = req.token_email;
 
-        const exists = await registrationsCollection.findOne({
-          eventId,
-          memberEmail,
-        });
+      const exists = await registrationsCollection.findOne({
+        eventId,
+        memberEmail,
+      });
 
-        res.send({ isRegistered: !!exists });
-      }
-    );
+      res.send({ isRegistered: !!exists });
+    });
 
     app.post(
       "/free-membership",
