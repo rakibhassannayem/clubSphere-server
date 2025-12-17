@@ -122,22 +122,6 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/clubs", async (req, res) => {
-      const club = req.body;
-      const result = await clubsCollection.insertOne(club);
-      res.send(result);
-    });
-
-    app.patch("/clubs/:id", async (req, res) => {
-      const query = { _id: new ObjectId(req.params.id) };
-      const updatedDoc = req.body;
-      const result = await clubsCollection.updateOne(query, {
-        $set: updatedDoc,
-      });
-
-      res.send(result);
-    });
-
     // Events related APIs
     app.get("/events", async (req, res) => {
       const cursor = eventsCollection.find();
@@ -155,38 +139,20 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/events", async (req, res) => {
-      const event = req.body;
-      const result = await eventsCollection.insertOne(event);
-      res.send(result);
-    });
-
     app.get("/events/:id", async (req, res) => {
       const id = req.params.id;
       const result = await eventsCollection.findOne({ _id: new ObjectId(id) });
       res.send(result);
     });
 
-    app.patch("/events/:id", async (req, res) => {
-      const query = { _id: new ObjectId(req.params.id) };
-      const updatedDoc = req.body;
-      const result = await eventsCollection.updateOne(query, {
-        $set: updatedDoc,
-      });
-
-      res.send(result);
-    });
-
-    app.delete("/events/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-
-      const result = await eventsCollection.deleteOne(query);
-
-      res.send(result);
-    });
-
     // admin ony APIs
+    app.get("/users", verifyJwtToken, verifyAdmin, async (req, res) => {
+      const adminEmail = req.token_email;
+      const cursor = usersCollection.find({ email: { $ne: adminEmail } });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
     app.get(
       "/admin/overview",
       verifyJwtToken,
@@ -226,11 +192,36 @@ async function run() {
       }
     );
 
-    app.get("/payments", async (req, res) => {
+    app.get("/payments", verifyJwtToken, verifyAdmin, async (req, res) => {
       const cursor = paymentsCollection.find();
       const result = await cursor.toArray();
       res.send(result);
     });
+
+    app.patch("/update-role", verifyJwtToken, verifyAdmin, async (req, res) => {
+      const { email, role } = req.body;
+      const result = await usersCollection.updateOne(
+        { email },
+        { $set: { role } }
+      );
+
+      res.send(result);
+    });
+
+    app.patch(
+      "/update-club-status",
+      verifyJwtToken,
+      verifyJwtToken,
+      async (req, res) => {
+        const { id, status } = req.body;
+        const result = await clubsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+
+        res.send(result);
+      }
+    );
 
     // manager only APIs
     app.get(
@@ -278,6 +269,12 @@ async function run() {
       }
     );
 
+    app.post("/clubs", verifyJwtToken, verifyMananger, async (req, res) => {
+      const club = req.body;
+      const result = await clubsCollection.insertOne(club);
+      res.send(result);
+    });
+
     app.get(
       "/manager-clubs",
       verifyJwtToken,
@@ -301,6 +298,21 @@ async function run() {
       }
     );
 
+    app.patch(
+      "/clubs/:id",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const query = { _id: new ObjectId(req.params.id) };
+        const updatedDoc = req.body;
+        const result = await clubsCollection.updateOne(query, {
+          $set: updatedDoc,
+        });
+
+        res.send(result);
+      }
+    );
+
     app.get(
       "/club-members",
       verifyJwtToken,
@@ -316,6 +328,27 @@ async function run() {
       }
     );
 
+    app.patch(
+      "/update-member-status",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const { id, status } = req.body;
+        const result = await memberShipsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+
+        res.send(result);
+      }
+    );
+
+    app.post("/events", verifyJwtToken, verifyMananger, async (req, res) => {
+      const event = req.body;
+      const result = await eventsCollection.insertOne(event);
+      res.send(result);
+    });
+
     app.get(
       "/manager-events",
       verifyJwtToken,
@@ -324,6 +357,35 @@ async function run() {
         const managerEmail = req.token_email;
 
         const result = await eventsCollection.find({ managerEmail }).toArray();
+
+        res.send(result);
+      }
+    );
+
+    app.patch(
+      "/events/:id",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const query = { _id: new ObjectId(req.params.id) };
+        const updatedDoc = req.body;
+        const result = await eventsCollection.updateOne(query, {
+          $set: updatedDoc,
+        });
+
+        res.send(result);
+      }
+    );
+
+    app.delete(
+      "/events/:id",
+      verifyJwtToken,
+      verifyMananger,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+
+        const result = await eventsCollection.deleteOne(query);
 
         res.send(result);
       }
@@ -451,29 +513,83 @@ async function run() {
       }
     );
 
-    app.get("/is-member/:clubId", verifyJwtToken, async (req, res) => {
-      const { clubId } = req.params;
-      const memberEmail = req.token_email;
+    app.get(
+      "/is-member/:clubId",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const { clubId } = req.params;
+        const memberEmail = req.token_email;
 
-      const exists = await memberShipsCollection.findOne({
-        clubId,
-        memberEmail,
-      });
+        const exists = await memberShipsCollection.findOne({
+          clubId,
+          memberEmail,
+        });
 
-      res.send({ isMember: !!exists });
-    });
+        res.send({ isMember: !!exists });
+      }
+    );
 
-    app.get("/is-registered/:eventId", verifyJwtToken, async (req, res) => {
-      const { eventId } = req.params;
-      const memberEmail = req.token_email;
+    app.get(
+      "/is-registered/:eventId",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const { eventId } = req.params;
+        const memberEmail = req.token_email;
 
-      const exists = await registrationsCollection.findOne({
-        eventId,
-        memberEmail,
-      });
+        const exists = await registrationsCollection.findOne({
+          eventId,
+          memberEmail,
+        });
 
-      res.send({ isRegistered: !!exists });
-    });
+        res.send({ isRegistered: !!exists });
+      }
+    );
+
+    app.post(
+      "/free-membership",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const freeInfo = req.body;
+
+        const result = await memberShipsCollection.insertOne(freeInfo);
+        if (result.acknowledged) {
+          await clubsCollection.updateOne(
+            { _id: new ObjectId(freeInfo.clubId) },
+            {
+              $inc: {
+                members: 1,
+              },
+            }
+          );
+        }
+        res.send(result);
+      }
+    );
+
+    app.post(
+      "/free-registration",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const freeInfo = req.body;
+
+        const result = await registrationsCollection.insertOne(freeInfo);
+        if (result.acknowledged) {
+          await eventsCollection.updateOne(
+            { _id: new ObjectId(freeInfo.eventId) },
+            {
+              $inc: {
+                registrations: 1,
+              },
+            }
+          );
+        }
+        res.send(result);
+      }
+    );
 
     // Payments related APIs
     app.post("/create-checkout-session", verifyJwtToken, async (req, res) => {
@@ -636,50 +752,6 @@ async function run() {
       }
     });
 
-    app.post(
-      "/free-membership",
-      verifyJwtToken,
-      verifyMember,
-      async (req, res) => {
-        const freeInfo = req.body;
-
-        const result = await memberShipsCollection.insertOne(freeInfo);
-        if (result.acknowledged) {
-          await clubsCollection.updateOne(
-            { _id: new ObjectId(freeInfo.clubId) },
-            {
-              $inc: {
-                members: 1,
-              },
-            }
-          );
-        }
-        res.send(result);
-      }
-    );
-
-    app.post(
-      "/free-registration",
-      verifyJwtToken,
-      verifyMember,
-      async (req, res) => {
-        const freeInfo = req.body;
-
-        const result = await registrationsCollection.insertOne(freeInfo);
-        if (result.acknowledged) {
-          await eventsCollection.updateOne(
-            { _id: new ObjectId(freeInfo.eventId) },
-            {
-              $inc: {
-                registrations: 1,
-              },
-            }
-          );
-        }
-        res.send(result);
-      }
-    );
-
     // users API
     app.post("/user", async (req, res) => {
       const userData = req.body;
@@ -696,49 +768,12 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/users", verifyJwtToken, async (req, res) => {
-      const adminEmail = req.token_email;
-      const cursor = usersCollection.find({ email: { $ne: adminEmail } });
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-
     app.get("/user/role", verifyJwtToken, async (req, res) => {
       const email = req.query.email;
 
       const result = await usersCollection.findOne({ email });
 
       res.send({ role: result?.role });
-    });
-
-    app.patch("/update-role", async (req, res) => {
-      const { email, role } = req.body;
-      const result = await usersCollection.updateOne(
-        { email },
-        { $set: { role } }
-      );
-
-      res.send(result);
-    });
-
-    app.patch("/update-club-status", async (req, res) => {
-      const { id, status } = req.body;
-      const result = await clubsCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status } }
-      );
-
-      res.send(result);
-    });
-
-    app.patch("/update-member-status", async (req, res) => {
-      const { id, status } = req.body;
-      const result = await memberShipsCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status } }
-      );
-
-      res.send(result);
     });
 
     // Send a ping to confirm a successful connection
