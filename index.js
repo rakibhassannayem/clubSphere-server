@@ -387,23 +387,17 @@ async function run() {
       res.send(result);
     });
 
-    app.get(
-  "/is-member/:clubId",
-  verifyJwtToken,
-  async (req, res) => {
-    const { clubId } = req.params;
-    const memberEmail = req.token_email;
+    app.get("/is-member/:clubId", verifyJwtToken, async (req, res) => {
+      const { clubId } = req.params;
+      const memberEmail = req.token_email;
 
-    const exists = await memberShipsCollection.findOne({
-      clubId: new ObjectId(clubId),
-      memberEmail,
-      status: "active",
+      const exists = await memberShipsCollection.findOne({
+        clubId: new ObjectId(clubId),
+        memberEmail,
+      });
+
+      res.send({ isMember: !!exists });
     });
-
-    res.send({ isMember: !!exists });
-  }
-);
-
 
     // Payments related APIs
     app.post("/create-checkout-session", verifyJwtToken, async (req, res) => {
@@ -491,10 +485,10 @@ async function run() {
       const transactionId = session.payment_intent;
 
       // prevent duplicate payments
-      const joinReqDuplicate = await memberShipsCollection.findOne({
+      const paymentDuplicate = await paymentsCollection.findOne({
         transactionId,
       });
-      if (!joinReqDuplicate) {
+      if (!paymentDuplicate) {
         // return res.send({ success: true });
         // save payment
         await paymentsCollection.insertOne({
@@ -521,16 +515,23 @@ async function run() {
             },
           }
         );
-        await memberShipsCollection.insertOne({
-          clubId,
+
+        // prevent duplicate membership
+        const membershipDuplicate = await memberShipsCollection.findOne({
           transactionId,
-          memberEmail,
-          memberName,
-          status: "active",
-          managerEmail: managerEmail,
-          clubName,
-          joinedAt: new Date(),
         });
+        if (!membershipDuplicate) {
+          await memberShipsCollection.insertOne({
+            clubId,
+            transactionId,
+            memberEmail,
+            memberName,
+            status: "active",
+            managerEmail: managerEmail,
+            clubName,
+            joinedAt: new Date(),
+          });
+        }
       }
 
       if (paymentType === "eventFee") {
@@ -539,18 +540,25 @@ async function run() {
           { $inc: { registrations: 1 } }
         );
 
-        await registrationsCollection.insertOne({
-          eventId,
-          eventTitle,
-          clubId,
-          clubName,
-          memberEmail,
-          memberName,
-          managerEmail,
+        // prevent duplicate registration
+        const registrationDuplicate = await registrationsCollection.findOne({
           transactionId,
-          status: "registered",
-          registeredAt: new Date(),
         });
+
+        if (!registrationDuplicate) {
+          await registrationsCollection.insertOne({
+            eventId,
+            eventTitle,
+            clubId,
+            clubName,
+            memberEmail,
+            memberName,
+            managerEmail,
+            transactionId,
+            status: "registered",
+            registeredAt: new Date(),
+          });
+        }
       }
     });
 
