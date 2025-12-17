@@ -145,6 +145,16 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/upcoming-events", async (req, res) => {
+      const today = new Date().toISOString();
+      // today.setUTCHours(0, 0, 0, 0);
+
+      const cursor = eventsCollection.find({ eventDate: { $gte: today } });
+      const result = await cursor.toArray();
+
+      res.send(result);
+    });
+
     app.post("/events", async (req, res) => {
       const event = req.body;
       const result = await eventsCollection.insertOne(event);
@@ -389,6 +399,57 @@ async function run() {
 
       res.send(result);
     });
+
+    app.get(
+      "/member-payments",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const memberEmail = req.token_email;
+
+        const result = await paymentsCollection.find({ memberEmail }).toArray();
+
+        res.send(result);
+      }
+    );
+
+    app.get(
+      "/member-events",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const memberEmail = req.token_email;
+
+        const result = await registrationsCollection
+          .aggregate([
+            {
+              $match: { memberEmail },
+            },
+            {
+              $addFields: {
+                eventObjectId: { $toObjectId: "$eventId" },
+              },
+            },
+            {
+              $lookup: {
+                from: "events",
+                localField: "eventObjectId",
+                foreignField: "_id",
+                as: "event",
+              },
+            },
+            {
+              $unwind: "$event",
+            },
+            {
+              $replaceRoot: { newRoot: "$event" },
+            },
+          ])
+          .toArray();
+
+        res.send(result);
+      }
+    );
 
     app.get("/is-member/:clubId", verifyJwtToken, async (req, res) => {
       const { clubId } = req.params;
