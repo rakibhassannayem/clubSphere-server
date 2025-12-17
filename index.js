@@ -240,21 +240,24 @@ async function run() {
           managerEmail,
         });
 
-        const revenueResult = await paymentsCollection
-          .aggregate([
-            {
-              $match: { managerEmail },
-            },
-            {
-              $group: {
-                _id: null,
-                totalAmount: { $sum: "$amount" },
+        let revenue = 0;
+        const hasPayment = await paymentsCollection.findOne({ managerEmail });
+        if (hasPayment) {
+          const revenueResult = await paymentsCollection
+            .aggregate([
+              {
+                $match: { managerEmail },
               },
-            },
-          ])
-          .toArray();
-
-        const revenue = revenueResult[0].totalAmount || 0;
+              {
+                $group: {
+                  _id: null,
+                  totalAmount: { $sum: "$amount" },
+                },
+              },
+            ])
+            .toArray();
+          revenue = revenueResult[0]?.totalAmount || 0;
+        }
 
         res.send({
           myClubs,
@@ -392,11 +395,23 @@ async function run() {
       const memberEmail = req.token_email;
 
       const exists = await memberShipsCollection.findOne({
-        clubId: new ObjectId(clubId),
+        clubId,
         memberEmail,
       });
 
       res.send({ isMember: !!exists });
+    });
+
+    app.get("/is-registered/:eventId", verifyJwtToken, async (req, res) => {
+      const { eventId } = req.params;
+      const memberEmail = req.token_email;
+
+      const exists = await registrationsCollection.findOne({
+        eventId,
+        memberEmail,
+      });
+
+      res.send({ isRegistered: !!exists });
     });
 
     // Payments related APIs
@@ -489,8 +504,6 @@ async function run() {
         transactionId,
       });
       if (!paymentDuplicate) {
-        // return res.send({ success: true });
-        // save payment
         await paymentsCollection.insertOne({
           paymentType,
           amount: session.amount_total / 100,
@@ -561,6 +574,50 @@ async function run() {
         }
       }
     });
+
+    app.post(
+      "/free-membership",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const freeInfo = req.body;
+
+        const result = await memberShipsCollection.insertOne(freeInfo);
+        if (result.acknowledged) {
+          await clubsCollection.updateOne(
+            { _id: new ObjectId(freeInfo.clubId) },
+            {
+              $inc: {
+                members: 1,
+              },
+            }
+          );
+        }
+        res.send(result);
+      }
+    );
+
+    app.post(
+      "/free-registration",
+      verifyJwtToken,
+      verifyMember,
+      async (req, res) => {
+        const freeInfo = req.body;
+
+        const result = await registrationsCollection.insertOne(freeInfo);
+        if (result.acknowledged) {
+          await eventsCollection.updateOne(
+            { _id: new ObjectId(freeInfo.eventId) },
+            {
+              $inc: {
+                registrations: 1,
+              },
+            }
+          );
+        }
+        res.send(result);
+      }
+    );
 
     // users API
     app.post("/user", async (req, res) => {
