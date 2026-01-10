@@ -8,7 +8,9 @@ const admin = require("firebase-admin");
 const jwt = require("jsonwebtoken");
 const port = process.env.PORT || 3000;
 
-const serviceAccount = require("./clubsphere-firebase-adminsdk.json");
+// const serviceAccount = require("./clubsphere-firebase-adminsdk.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -188,10 +190,11 @@ async function run() {
 
     app.get("/upcoming-events", async (req, res) => {
       const today = new Date().toISOString();
-      // today.setUTCHours(0, 0, 0, 0);
 
-      const cursor = eventsCollection.find({ eventDate: { $gte: today } });
-      const result = await cursor.toArray();
+      const result = await eventsCollection
+        .find({ eventDate: { $gte: today } })
+        .limit(6)
+        .toArray();
 
       res.send(result);
     });
@@ -201,6 +204,11 @@ async function run() {
       const result = await eventsCollection.findOne({ _id: new ObjectId(id) });
       res.send(result);
     });
+
+    app.get("/userCount", async (req, res)=>{
+      const result = await usersCollection.countDocuments();
+      res.send(result);
+    })
 
     // admin ony APIs
     app.get("/users", verifyJwtToken, verifyAdmin, async (req, res) => {
@@ -587,7 +595,7 @@ async function run() {
       }
     );
 
-    app.get("/is-member/:clubId", async (req, res) => {
+    app.get("/is-member/:clubId", verifyJwtToken, async (req, res) => {
       const { clubId } = req.params;
       const memberEmail = req.token_email;
 
@@ -599,7 +607,7 @@ async function run() {
       res.send({ isMember: !!exists });
     });
 
-    app.get("/is-registered/:eventId", async (req, res) => {
+    app.get("/is-registered/:eventId", verifyJwtToken, async (req, res) => {
       const { eventId } = req.params;
       const memberEmail = req.token_email;
 
