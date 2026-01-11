@@ -102,6 +102,30 @@ async function run() {
       next();
     };
 
+    /**
+ * Backend Middleware: blocks write operations for demo accounts
+ */
+    const verifyDemo = (req, res, next) => {
+      const demoEmails = [
+        "admin@sphere.com",
+        "manager@sphere.com",
+        "member@sphere.com",
+      ];
+
+      const email = req.token_email;
+
+      if (email && demoEmails.includes(email)) {
+        if (req.method !== "GET") {
+          return res.send({
+            success: false,
+            isDemo: true,
+            message: "Demo Mode: You can view the UI but cannot modify data.",
+          });
+        }
+      }
+      next();
+    };
+
     // JWT token generation and send to client
     app.post("/getJwtToken", (req, res) => {
       loggedUser = req.body;
@@ -205,7 +229,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/userCount", async (req, res)=>{
+    app.get("/userCount", async (req, res) => {
       const result = await usersCollection.countDocuments();
       res.send(result);
     })
@@ -269,7 +293,7 @@ async function run() {
       res.send(result);
     });
 
-    app.patch("/update-role", verifyJwtToken, verifyAdmin, async (req, res) => {
+    app.patch("/update-role", verifyJwtToken, verifyDemo, verifyAdmin, async (req, res) => {
       const { email, role } = req.body;
       const result = await usersCollection.updateOne(
         { email },
@@ -282,7 +306,8 @@ async function run() {
     app.patch(
       "/update-club-status",
       verifyJwtToken,
-      verifyJwtToken,
+      verifyDemo,
+      verifyAdmin,
       async (req, res) => {
         const { id, status } = req.body;
         const result = await clubsCollection.updateOne(
@@ -340,7 +365,7 @@ async function run() {
       }
     );
 
-    app.post("/clubs", verifyJwtToken, verifyMananger, async (req, res) => {
+    app.post("/clubs", verifyJwtToken, verifyDemo, verifyMananger, async (req, res) => {
       const club = req.body;
       const result = await clubsCollection.insertOne(club);
       res.send(result);
@@ -372,6 +397,7 @@ async function run() {
     app.patch(
       "/clubs/:id",
       verifyJwtToken,
+      verifyDemo,
       verifyMananger,
       async (req, res) => {
         const query = { _id: new ObjectId(req.params.id) };
@@ -402,6 +428,7 @@ async function run() {
     app.patch(
       "/update-member-status",
       verifyJwtToken,
+      verifyDemo,
       verifyMananger,
       async (req, res) => {
         const { id, status } = req.body;
@@ -414,7 +441,7 @@ async function run() {
       }
     );
 
-    app.post("/events", verifyJwtToken, verifyMananger, async (req, res) => {
+    app.post("/events", verifyJwtToken, verifyDemo, verifyMananger, async (req, res) => {
       const event = req.body;
       const result = await eventsCollection.insertOne(event);
 
@@ -447,6 +474,7 @@ async function run() {
     app.patch(
       "/events/:id",
       verifyJwtToken,
+      verifyDemo,
       verifyMananger,
       async (req, res) => {
         const query = { _id: new ObjectId(req.params.id) };
@@ -462,6 +490,7 @@ async function run() {
     app.delete(
       "/events/:id",
       verifyJwtToken,
+      verifyDemo,
       verifyMananger,
       async (req, res) => {
         const id = req.params.id;
@@ -622,6 +651,7 @@ async function run() {
     app.post(
       "/free-membership",
       verifyJwtToken,
+      verifyDemo,
       verifyMember,
       async (req, res) => {
         const freeInfo = req.body;
@@ -644,6 +674,7 @@ async function run() {
     app.post(
       "/free-registration",
       verifyJwtToken,
+      verifyDemo,
       verifyMember,
       async (req, res) => {
         const freeInfo = req.body;
@@ -664,7 +695,7 @@ async function run() {
     );
 
     // Payments related APIs
-    app.post("/create-checkout-session", verifyJwtToken, async (req, res) => {
+    app.post("/create-checkout-session", verifyJwtToken, verifyDemo, async (req, res) => {
       try {
         const {
           paymentType,
